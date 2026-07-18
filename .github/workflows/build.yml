@@ -1,0 +1,32 @@
+name: build
+
+on:
+  push:
+    branches: [main]
+  schedule:
+    - cron: "0 15 * * *" # 22:00 VN nightly
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        node: [22, 24]
+        flavor: [builder, runtime]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: abxst/actions/strict@v3
+        with:
+          push: true
+          image-name: ${{ github.repository }}-${{ matrix.node }}-${{ matrix.flavor }}
+          dockerfile: ./Dockerfile.${{ matrix.flavor }}
+          build-args: |
+            NODE_VERSION=${{ matrix.node }}
+          registry-username: ${{ github.actor }}
+          registry-password: ${{ secrets.GITHUB_TOKEN }}

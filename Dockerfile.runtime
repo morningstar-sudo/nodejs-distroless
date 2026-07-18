@@ -1,0 +1,20 @@
+ARG NODE_VERSION=22
+FROM cgr.dev/chainguard/wolfi-base AS build
+
+ARG NODE_VERSION
+# posix-libc-utils provides ldd; build-stage only, never shipped
+RUN apk add --no-cache nodejs-${NODE_VERSION} posix-libc-utils
+
+# Collect node and every shared library it links against into /out,
+# so the final stage only receives an explicit allowlist of files.
+RUN mkdir -p /out/usr/bin /out/usr/lib && \
+    cp /usr/bin/node /out/usr/bin/ && \
+    ldd /usr/bin/node > /tmp/ldd.txt && \
+    awk '$2 == "=>" { print $3 }' /tmp/ldd.txt | sort -u | \
+    xargs -I{} cp -L {} /out/usr/lib/ && \
+    test -n "$(ls /out/usr/lib)"
+
+FROM cgr.dev/chainguard/glibc-dynamic:latest
+COPY --from=build /out/ /
+WORKDIR /app
+ENTRYPOINT ["/usr/bin/node"]
