@@ -4,6 +4,7 @@ FROM cgr.dev/chainguard/wolfi-base
 ARG NODE_VERSION
 ARG CACHE_BUST=local
 RUN test -n "$CACHE_BUST" && \
+    apk upgrade --no-cache && \
     apk add --no-cache \
     nodejs-${NODE_VERSION} \
     npm \
