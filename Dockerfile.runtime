@@ -1,4 +1,6 @@
 ARG NODE_VERSION=22
+FROM ghcr.io/morningstar-sudo/baseless-glibc:latest AS baseless-runtime
+
 FROM cgr.dev/chainguard/wolfi-base AS build
 
 ARG NODE_VERSION
@@ -6,15 +8,22 @@ ARG NODE_VERSION
 RUN apk add --no-cache nodejs-${NODE_VERSION} posix-libc-utils
 
 # Collect node and every shared library it links against into /out,
-# so the final stage only receives an explicit allowlist of files.
+# except libraries already supplied by the Baseless runtime. This avoids
+# silently replacing the audited Baseless glibc with Wolfi's copy.
+COPY --from=baseless-runtime /usr/lib/ /baseless/usr/lib/
 RUN mkdir -p /out/usr/bin /out/usr/lib && \
     cp /usr/bin/node /out/usr/bin/ && \
     ldd /usr/bin/node > /tmp/ldd.txt && \
     awk '$2 == "=>" { print $3 }' /tmp/ldd.txt | sort -u | \
-    xargs -I{} cp -L {} /out/usr/lib/ && \
+    while IFS= read -r library; do \
+      name="$(basename "$library")"; \
+      if [ ! -e "/baseless/usr/lib/$name" ]; then \
+        cp -L "$library" "/out/usr/lib/$name"; \
+      fi; \
+    done && \
     test -n "$(ls /out/usr/lib)"
 
-FROM cgr.dev/chainguard/glibc-dynamic:latest
+FROM baseless-runtime
 COPY --from=build /out/ /
 WORKDIR /app
 ENTRYPOINT ["/usr/bin/node"]
