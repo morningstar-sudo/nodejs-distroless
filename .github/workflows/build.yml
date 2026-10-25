@@ -10,6 +10,7 @@ on:
 permissions:
   contents: read
   packages: write
+  id-token: write
 
 jobs:
   build:
@@ -17,17 +18,62 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        node: [22, 24]
+        node:
+          - major: 22
+          - major: 24
         flavor: [builder, runtime]
     steps:
       - uses: actions/checkout@v4
+
+      # Trivy cannot see a node binary copied out of the official image, so
+      # gate on the patch level instead: the latest release has no fixable CVE.
+      - name: Require latest Node.js patch release
+        env:
+          NODE_MAJOR: ${{ matrix.node.major }}
+        run: |
+          set -euo pipefail
+          latest="$(curl -fsSL https://nodejs.org/dist/index.json |
+            jq -r --arg prefix "v${NODE_MAJOR}." 'map(select(.version | startswith($prefix)))[0].version')"
+          image="v$(docker buildx imagetools inspect "node:${NODE_MAJOR}-bookworm-slim" --format '{{json .Image}}' |
+            grep -oE 'NODE_VERSION=[0-9.]+' | head -1 | cut -d= -f2)"
+          echo "nodejs.org: ${latest}, node:${NODE_MAJOR}-bookworm-slim: ${image}"
+          test "${latest}" = "${image}"
+
       - uses: abxst/actions/strict@v3
+        id: build
         with:
           push: true
-          image-name: ${{ github.repository }}-${{ matrix.node }}-${{ matrix.flavor }}
+          image-name: ${{ github.repository }}-${{ matrix.node.major }}-${{ matrix.flavor }}
           dockerfile: ./Dockerfile.${{ matrix.flavor }}
           build-args: |
-            NODE_VERSION=${{ matrix.node }}
+            NODE_MAJOR=${{ matrix.node.major }}
             CACHE_BUST=${{ github.run_id }}-${{ github.run_attempt }}
           registry-username: ${{ github.actor }}
           registry-password: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: sigstore/cosign-installer@v3
+        if: steps.build.outputs.image-digest != ''
+        with:
+          cosign-release: v3.1.4
+
+      - uses: anchore/sbom-action/download-syft@v0
+        if: steps.build.outputs.image-digest != ''
+
+      - name: Sign image and attest SBOM
+        if: steps.build.outputs.image-digest != ''
+        env:
+          IMAGE: ghcr.io/${{ steps.build.outputs.image-name-lc }}
+          DIGEST: ${{ steps.build.outputs.image-digest }}
+        run: |
+          set -euo pipefail
+          platform_digests="$(docker buildx imagetools inspect --raw "${IMAGE}@${DIGEST}" |
+            jq -r '.manifests[]? | select(.platform.os == "linux") | .digest')"
+          for digest in ${platform_digests:-${DIGEST}}; do
+            syft "${IMAGE}@${digest}" -o spdx-json=sbom.spdx.json
+            cosign attest --yes --registry-referrers-mode=legacy \
+              --type spdxjson --predicate sbom.spdx.json "${IMAGE}@${digest}"
+            cosign sign --yes --registry-referrers-mode=legacy "${IMAGE}@${digest}"
+          done
+          if [ -n "${platform_digests}" ]; then
+            cosign sign --yes --registry-referrers-mode=legacy "${IMAGE}@${DIGEST}"
+          fi

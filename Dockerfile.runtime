@@ -1,21 +1,28 @@
-ARG NODE_VERSION=22
+ARG NODE_MAJOR=22
+FROM node:${NODE_MAJOR}-bookworm-slim AS node
 FROM ghcr.io/morningstar-sudo/baseless-glibc:latest AS baseless-runtime
 
-FROM cgr.dev/chainguard/wolfi-base AS build
+FROM cgr.dev/chainguard/wolfi-base:latest AS build
 
-ARG NODE_VERSION
+ARG NODE_MAJOR
 ARG CACHE_BUST=local
-# posix-libc-utils provides ldd; build-stage only, never shipped
+
+# Node.js comes from the official Docker image, which ships the GPG-verified
+# nodejs.org release binary as soon as it is published. Wolfi only supplies
+# the C++ runtime libraries node links against.
 RUN test -n "$CACHE_BUST" && \
-    apk add --no-cache nodejs-${NODE_VERSION} posix-libc-utils
+    apk upgrade --no-cache && \
+    apk add --no-cache libstdc++ posix-libc-utils
+COPY --from=node /usr/local/bin/node /node/bin/node
+RUN /node/bin/node --version | grep -E "^v${NODE_MAJOR}\."
 
 # Collect node and every shared library it links against into /out,
 # except libraries already supplied by the Baseless runtime. This avoids
 # silently replacing the audited Baseless glibc with Wolfi's copy.
 COPY --from=baseless-runtime /usr/lib/ /baseless/usr/lib/
 RUN mkdir -p /out/usr/bin /out/usr/lib && \
-    cp /usr/bin/node /out/usr/bin/ && \
-    ldd /usr/bin/node > /tmp/ldd.txt && \
+    cp /node/bin/node /out/usr/bin/node && \
+    ldd /node/bin/node > /tmp/ldd.txt && \
     awk '$2 == "=>" { print $3 }' /tmp/ldd.txt | sort -u | \
     while IFS= read -r library; do \
       name="$(basename "$library")"; \

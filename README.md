@@ -7,8 +7,10 @@
 
 **Minimal, secure Node.js container images** for production: a full-toolchain
 **builder** image and a truly **distroless runtime** image (no shell, no
-package manager, non-root) for Node.js 22 and 24. The builder uses
-[Chainguard Wolfi](https://github.com/wolfi-dev), while the runtime uses
+package manager, non-root) for Node.js 22 and 24. Node.js itself is the
+official release binary taken from the Docker Official `node` image. The
+builder uses [Chainguard Wolfi](https://github.com/wolfi-dev) for its
+toolchain, while the runtime uses
 [Baseless](https://github.com/morningstar-sudo/baseless). Every image is rebuilt
 **nightly**, scanned with **Trivy under a strict gate** (build fails on any
 CVE of any severity, including unfixed), and published to GitHub Container
@@ -20,13 +22,15 @@ Registry (ghcr.io).
 |---|---|---|---|---|
 | `ghcr.io/morningstar-sudo/nodejs-distroless-22-builder` | 22.x | wolfi-base | ~1 GB | node, npm, node-gyp, gcc, make, python-3, git |
 | `ghcr.io/morningstar-sudo/nodejs-distroless-24-builder` | 24.x | wolfi-base | ~1 GB | node, npm, node-gyp, gcc, make, python-3, git |
-| `ghcr.io/morningstar-sudo/nodejs-distroless-22-runtime` | 22.x | baseless-glibc | ~125 MB (~44 MB pull) | node binary + shared libs only |
-| `ghcr.io/morningstar-sudo/nodejs-distroless-24-runtime` | 24.x | baseless-glibc | ~127 MB (~45 MB pull) | node binary + shared libs only |
+| `ghcr.io/morningstar-sudo/nodejs-distroless-22-runtime` | 22.x | baseless-glibc | ~205 MB | node binary + shared libs only |
+| `ghcr.io/morningstar-sudo/nodejs-distroless-24-runtime` | 24.x | baseless-glibc | ~208 MB | node binary + shared libs only |
 
 **Tags:** every build publishes `<git-sha>-<DDMMYYYY>` (immutable, pin this in
 production) and `latest`. A scheduled rebuild runs every night at 15:00 UTC to
-pick up patched Wolfi packages and the latest Baseless runtime, so `latest` is
-at most one nightly rebuild behind current dependencies.
+pick up the latest Node.js patch release, patched Wolfi packages and the
+latest Baseless runtime, so `latest` is at most one nightly rebuild behind
+current dependencies. CI fails if the official `node` image is behind the
+newest patch release on nodejs.org.
 
 ## Quick start
 
@@ -67,9 +71,15 @@ arguments directly (`CMD ["server.js"]` runs `node server.js`).
 
 ## Native modules (node-gyp, better-sqlite3, sharp, …)
 
-Wolfi ships **npm 12, which blocks package install scripts by default** —
-`npm install` succeeds but native addons are silently left uncompiled.
-Approve the packages that need install scripts:
+The npm bundled with Node.js carries dependencies with known CVEs, so the
+builder replaces it at build time (`scripts/fetch-npm.sh`): the newest npm 12
+release, with the bundled dependencies listed in `NPM_DEPENDENCY_OVERRIDES`
+upgraded to their newest release in the same major. Every tarball must match
+the registry integrity hash and carry a valid npm registry signature.
+
+**npm 12 blocks package install scripts by default** — `npm install` succeeds
+but native addons are silently left uncompiled. Approve the packages that need
+install scripts:
 
 ```sh
 npm install-scripts approve better-sqlite3
@@ -77,7 +87,8 @@ npm install
 ```
 
 The builder image carries the full native toolchain (gcc, make, python-3,
-node-gyp). Addons compiled there are binary-compatible with the runtime image.
+node-gyp) and the Node.js headers, so node-gyp builds offline. Addons compiled
+there are binary-compatible with the runtime image.
 
 ## Debugging a distroless container
 
@@ -111,10 +122,10 @@ its shared libraries, CA certificates — with no OS userland: no shell, no
 package manager, no coreutils. Smaller attack surface, smaller size, cleaner
 scans.
 
-**Why is the runtime about 125 MB and not smaller?**
-Node itself links `libicu` with full ICU data (~40 MB) plus V8. A smaller
+**Why is the runtime about 205 MB and not smaller?**
+The official `node` binary (~125 MB) embeds V8 and full ICU data. A smaller
 image would require a custom Node build with `small-icu`; these images use
-the stock Wolfi `nodejs-22`/`nodejs-24` packages for patch speed.
+the official release binary for patch speed.
 
 **Can I pin an exact version?**
 Pin the immutable `<git-sha>-<DDMMYYYY>` tag, or pin by digest
