@@ -28,5 +28,6 @@ jobs:
           dockerfile: ./Dockerfile.${{ matrix.flavor }}
           build-args: |
             NODE_VERSION=${{ matrix.node }}
+            CACHE_BUST=${{ github.run_id }}-${{ github.run_attempt }}
           registry-username: ${{ github.actor }}
           registry-password: ${{ secrets.GITHUB_TOKEN }}

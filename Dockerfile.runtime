@@ -4,8 +4,10 @@ FROM ghcr.io/morningstar-sudo/baseless-glibc:latest AS baseless-runtime
 FROM cgr.dev/chainguard/wolfi-base AS build
 
 ARG NODE_VERSION
+ARG CACHE_BUST=local
 # posix-libc-utils provides ldd; build-stage only, never shipped
-RUN apk add --no-cache nodejs-${NODE_VERSION} posix-libc-utils
+RUN test -n "$CACHE_BUST" && \
+    apk add --no-cache nodejs-${NODE_VERSION} posix-libc-utils
 
 # Collect node and every shared library it links against into /out,
 # except libraries already supplied by the Baseless runtime. This avoids
